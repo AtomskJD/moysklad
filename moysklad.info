@@ -1,0 +1,5 @@
+name = MoySklad
+description = Test module for moy sclad.
+core = 7.x
+; NEW LINE
+configure = admin/store/settings/moysklad

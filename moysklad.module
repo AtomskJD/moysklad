@@ -1,0 +1,997 @@
+<?php
+error_reporting(E_ALL);
+ini_set('display_errors', TRUE);
+ini_set('display_startup_errors', TRUE);
+
+
+require_once (dirname(__FILE__) . '/moysklad.inc.php');
+require_once (dirname(__FILE__) . '/testcase.inc.php');
+require_once (dirname(__FILE__) . '/orders.inc.php');
+
+
+/**
+ * Implements hook_block_info().
+ */
+function moysklad_block_info() {
+  $blocks['moysklad'] = array(
+    // The name that will appear in the block list.
+    'info' => t('moysklad_menu'),
+    // Default setting.
+    'cache' => DRUPAL_CACHE_PER_ROLE,
+  );
+  return $blocks;
+}
+
+
+/**
+ * Custom content function.
+ *
+ * Set beginning and end dates, retrieve posts from database
+ * saved in that time period.
+ *
+ * @return
+ *   A result set of the targeted posts.
+ */
+function moysklad_contents(){
+  //Get today's date.
+  $today = getdate();
+  //Calculate the date a week ago.
+  $start_time = mktime(0, 0, 0,$today['mon'],($today['mday'] - 7), $today['year']);
+  //Get all posts from one week ago to the present.
+  $end_time = time();
+
+ $max_num = variable_get('current_posts_max', 3);
+
+  //Use Database API to retrieve current posts.
+  $query = db_select('node', 'n')
+    ->fields('n', array('nid', 'title', 'created'))
+    ->condition('status', 1) //Published.
+    ->condition('created', array($start_time, $end_time), 'BETWEEN')
+    ->orderBy('created', 'DESC') //Most recent first.
+    ->range(0, $max_num) //NEW LINE
+    ->execute();
+  return $query;
+}
+
+
+function get_moy_stock() {
+$DEBUG_parser_start_time = microtime(true);
+
+    $url = 'https://online.moysklad.ru/exchange/rest/stock/json';
+    $auth = base64_encode(variable_get('moysklad_login').':'.variable_get('moysklad_pass'));
+    $header = array("Authorization: Basic $auth");
+    $opts = array( 'http' => array ('method'=>'GET', 'header'=>$header));
+    $ctx = stream_context_create($opts);
+
+    $result = file_get_contents($url,false,$ctx);
+
+
+$DEBUG_parser_end_time = microtime(true);
+$DEBUG_parser_time = $DEBUG_parser_end_time - $DEBUG_parser_start_time;
+file_put_contents("logs/debug-timeline.log", "\nget_moy_stock (connection): ". $DEBUG_parser_time ." sec.", FILE_APPEND);
+
+    // on communication error return false
+    if ( $result ) {
+      return $arr = json_decode($result);
+    } else {
+      return false;
+    }
+
+  // echo "<h1> ODODOD </h1>";
+
+}
+
+function get_detail_stock() {}
+
+
+/**
+ * Implements hook_block_view().
+ *
+ * Prepares the contents of the block.
+ */
+function moysklad_block_view($delta = '') {
+  switch ($delta) {
+    case 'moysklad':
+      $block['subject'] = t('Moy sklad info');
+      if (user_access('access content')) {
+        // Use our custom function to retrieve data.
+        $result = moysklad_contents();
+        get_moy_stock();
+
+        // Array to contain items for the block to render.
+        $items = array();
+        // Iterate over the resultset and format as links.
+
+
+
+
+        foreach ($result as $node) {
+          $items[] = array(
+            'data' => l($node->title, 'node/' . $node->nid),
+          );
+        }
+       // No content in the last week.
+        if (empty($items)) {
+          $block['content'] = t('No posts available.');
+        }
+        else {
+          // Pass data through theme function.
+          $block['content'] = theme('item_list', array(
+            'items' => $items));
+        }
+      }
+    return $block;
+  }
+
+}
+
+
+
+
+
+
+
+
+
+
+/**
+ * Implements hook_menu().
+ */
+function moysklad_menu() {
+  $items = array();
+
+  $items['admin/store/settings/moysklad'] = array(
+    'title' => 'Синхронизация с моим складом',
+    'description' => 'Configuration for Moy sklad module',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('moysklad_form'),
+    'access arguments' => array('access administration pages'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  return $items;
+}
+
+
+
+
+/**
+ * Page callback: Current posts settings
+ *
+ * @see current_posts_menu()
+ */
+function moysklad_form($form, &$form_state) {
+
+  /* USER connection settings
+  ============================================================================*/
+  $form['connection'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Connection settings'),
+  );
+
+  $form['connection']['moysklad_login'] = array(
+      '#type' => 'textfield',
+      '#title' => t('user login for moysklad'),
+      '#default_value' => variable_get('moysklad_login', 'user@name'),
+      '#size' => 30,
+      '#maxlength' => 30,
+      '#description' => t('Use full user name from email you received, look like user@name'),
+      '#required' => TRUE,
+    );
+  $form['connection']['moysklad_pass'] = array(
+      '#type' => 'textfield',
+      '#title' => t('user password for moysklad'),
+      '#default_value' => variable_get('moysklad_pass', ''),
+      '#size' => 30,
+      '#maxlength' => 30,
+      '#description' => t('Use password from email you received'),
+      '#required' => TRUE,
+    );
+
+  /* Manual controls
+  ============================================================================*/
+
+  $form['manual_import'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Manual controls'),
+    '#description' => t('USE WITH CAUTION!'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+    );
+
+  $form['manual_import']['instruction'] = array(
+    '#type' => 'markup',
+    '#markup' => "<div><ol>
+  <li>". t('Get remote data from moysklad.ru and save in to <strong>local cache</strong>') ."</li>
+  <li>". t('Update products from <strong>local cache</strong> <em>WARNING: not used drupal queues, unsafe operation </em>') ."</li>
+</ol></div>",);
+
+  $form['manual_import']['test'] = array(
+    '#type' => 'submit',
+    '#value' => 'test subject',
+    '#submit' => array('moysklad_test')
+  );
+
+  $form['manual_import']['button1'] = array(
+    '#type' => 'submit',
+    '#value' => '1. Получить остатки товаров из Моегосклада',
+    '#submit' => array('moysklad_form_action_one')
+  );
+
+  $form['manual_import']['button2'] = array(
+    '#type' => 'submit',
+    '#value' => '2. Получить описания товаров из Моегосклада',
+    '#submit' => array('moysclad_get_description_cache')
+  );
+
+  $form['manual_import']['button3'] = array(
+    '#type' => 'submit',
+    '#value' => '3. Получить данные о пользователях из Моего склада',
+    '#submit' => array('moysklad_users_cache'),
+  );
+
+
+  /* Cron runs info
+  ============================================================================*/
+
+  $form['status'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Cron status information'),
+    '#description' => t('For manual runnung'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+  );
+
+  $form['status']['intro'] = array(
+    '#type' => 'markup',
+    '#markup' => "<div><p>full manual test</p><ol>
+  <li>". t('Get remote data from moysklad.ru and save in to <strong>local cache</strong>') ."</li>
+  <li>". t('Add items from <strong> local cache</strong> to drupal queue') ."</li>
+  <li>". t('Perform SAFE update from drupal queue') ."</li>
+</ol></div>",);
+
+  $form['status']['last'] = array(
+    '#markup' => '<p>' . t('Cron task will next execute %time, the first time cron runs after (%seconds seconds from now)',
+    array(
+      '%time' => date_iso8601(variable_get('moysklad_cron_next_execution', time())),
+      '%seconds' => variable_get('moysklad_cron_next_execution', time()) - time(),
+    )
+    ) . '</p>',
+  );
+
+  $form['status']['cron_trigger'] = array(
+    '#type' => 'submit',
+    '#value' => t('Run cron now'),
+    '#submit' => array('moy_sklad_form_cron_run_submit'),
+  );
+
+
+
+  /* QUEUE setup
+  ============================================================================*/
+
+  $form['cron_queue_setup'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Cron queue setup'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+  );
+
+  $queue = DrupalQueue::get('moy_sklad_queue');
+
+
+  $form['cron_queue_setup']['current_cron_queue_status'] = array(
+    '#markup' => '<div>You also can use this for <strong>manual</strong> adding <strong>local cache</strong> data to drupal queue.</div>'.'<div>' . t('There are currently %queue items in queue 1', array('%queue' => $queue->numberOfItems())) . '</div>',
+  );
+
+
+
+  $form['cron_queue_setup']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Add jobs to queue'),
+    '#submit' => array('moysklad_manual_add_jobs_to_queue'),
+  );
+
+  $form['cron_queue_setup']['submit_all'] = array(
+    '#type' => 'submit',
+    '#value' => 'Обновить поваты без сравнения',
+    '#submit' => array('moysklad_manual_add_jobs_to_queue_all'),
+  );
+
+
+  /* CRON interval settings
+  ============================================================================*/
+
+  $form['configuration'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Configuration cron interval'),
+    '#description' => t('You need set cron interval first on <em>/admin/config/system/cron</em>'),
+  );
+
+  $form['configuration']['cron_enabled'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Enable cron task for import queue'),
+    '#default_value' => variable_get('cron_enabled', FALSE),
+    );
+
+
+  $form['configuration']['moysklad_interval'] = array(
+    '#type' => 'select',
+    '#title' => t('Cron interval'),
+    '#description' => t('Time after which cron_example_cron will respond to a processing request.'),
+    '#default_value' => variable_get('moysklad_interval', 60 * 60),
+    '#options' => array(
+      60 => t('1 minute'),
+      300 => t('5 minutes'),
+      600 => t('10 minutes'),
+      900 => t('15 minutes'),
+      3600 => t('60 minutes'),
+      60 * 60 * 24 => t('24 hr'),
+    ),
+  );
+
+
+
+  /* FORM EXPORTS
+  ============================================================================*/
+  $form['orders'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Order sync settings'),
+    '#description' => t('You need set cron interval first on <em>/admin/config/system/cron</em>'),
+  );
+
+
+  $form['orders']['default_warehouse'] = array(
+    '#type' => 'select',
+    '#title' => t('default warehouse'),
+    '#options' => variable_get('default_warehouse_arr', 'disconnected'),
+    '#default_value' => variable_get('default_warehouse'),
+    '#disabled' => _is_disabled('default_warehouse_arr'),
+  );
+
+  $form['orders']['default_mycompany'] = array(
+    '#type' => 'select',
+    '#title' => t('default company'),
+    '#options' => variable_get('default_mycompany_arr', 'disconnected'),
+    '#default_value' => variable_get('default_mycompany'),
+    '#disabled' => _is_disabled('default_mycompany_arr'),
+  );
+
+
+  $form['orders']['default_auuid'] = array(
+    '#type' => 'textfield',
+    '#title' => 'default user uuid',
+    '#size' => 30,
+    '#default_value' => variable_get('default_auuid', '')
+    );
+
+
+  $form['orders']['get_defaults'] = array(
+    '#type' => 'submit',
+    '#value' => t('get defaults'),
+    '#submit' => array('moysklad_get_defaults'),
+  );
+
+  $form['orders']['check_auuid'] = array(
+    '#type' => 'submit',
+    '#value' => t('check default auuid'),
+    '#submit' => array('_moysklad_check_auuid'),
+    );
+
+
+
+
+
+  /* END FORM CONTROLS========================================================*/
+  return system_settings_form($form);
+}
+
+
+
+function moysklad_get_defaults(){
+  variable_set('default_warehouse_arr', _moysklad_get_list('Warehouse', 'name'));
+  variable_set('default_mycompany_arr', _moysklad_get_list('MyCompany', 'director'));
+}
+
+
+
+
+/* ! CRON FUNCTIONS ============================================================*/
+
+/**
+  FUNCTION  Implements hook_cron(). (cron_hook)
+*/
+function moysklad_cron() {
+  file_put_contents("logs/debug-timeline.log", "\n\r". date("M d H:i:s"), FILE_APPEND);
+  // Default to an hourly interval. Of course, cron has to be running at least
+  // hourly for this to work.
+  $interval = variable_get('moysklad_interval', 60 * 60);
+  // We usually don't want to act every time cron runs (which could be every
+  // minute) so keep a time for the next run in a variable.
+  if ( (time() >= variable_get('moysklad_cron_next_execution', 0)) && (variable_get('cron_enabled')) ) {
+    $description_update = variable_get('description_update', 0);
+    $stock_cache_update = variable_get('stock_cache_update', 0);
+    $users_cache_update = variable_get('users_cache_update', 0);
+
+    $next_description_update = new DateTime();
+    $old_description_update = new DateTime();
+    $old_description_update->setTimestamp($description_update);
+    $next_description_update->setTimestamp($description_update);
+    $next_description_update->setTime(1,30);
+    $next_description_update->add(new DateInterval('P1D'));
+    $diff = $old_description_update->diff($next_description_update);
+
+    drupal_set_message ($diff->days, 'message', FALSE);
+
+    if ( $diff->days > 0 ){
+      moysclad_get_description_cache();
+      drupal_set_message("Запуск планировщика! <em>Для забора описаний</em>", 'status', false);
+    }
+    elseif ( $description_update > $stock_cache_update ) {
+      drupal_set_message("Запуск планировщика! <em>с учетом обновленных описаний</em>", 'status', false);
+      moysklad_manual_add_jobs_to_queue();
+
+      // дальше нам нужно сновавернуться к обновлению стоков но информация о последнем обнослении описаний еще может пригодиться
+      variable_set('stock_cache_update', time());
+    }
+    else {
+      drupal_set_message('Запуск планировщика! Обновление без описаний товаров <br> <em>для запуска планировщика с обновлением описаний необходимо получить описания товаров из моегосклада</em>', 'status', FALSE);
+      moysklad_form_action_one();
+      moysklad_users_cache();
+      moysklad_manual_add_jobs_to_queue();
+    }
+
+    variable_set('moysklad_cron_next_execution', time() + $interval);
+
+    file_put_contents("logs/timer.log", "\nscript running timestamp(date Hour:min:sec): \t". date("d H:i:s"), FILE_APPEND);
+
+  }
+}
+
+
+function moy_sklad_form_cron_run_submit($form, &$form_state) {
+
+  variable_set('moysklad_cron_next_execution', 0);
+
+  // We don't usually use globals in this way. This is used here only to
+  // make it easy to tell if cron was run by this form.
+  $GLOBALS['cron_example_show_status_message'] = TRUE;
+
+
+  if (drupal_cron_run()) {
+    drupal_set_message(t('Cron ran successfully.'));
+  }
+  else {
+    drupal_set_message(t('Cron run failed.'), 'error');
+  }
+}
+
+
+/**
+  FUNCTION moysklad_manual_add_jobs_to_queue (постановка в очередь)
+*/
+function moysklad_manual_add_jobs_to_queue() {
+$DEBUG_parser_start_time = microtime(true);
+
+  $queue = DrupalQueue::get('moy_sklad_queue');
+
+  // первый сет маппинг текущей базы по sku
+    $query = db_select('node', 'n');
+        $query->innerJoin('uc_products', 'p', 'n.nid = p.nid');
+        $query->leftJoin('field_data_body', 'b', 'n.nid = b.entity_id');
+        $query->leftJoin('uc_product_stock', 's', 'n.nid = s.nid');
+        $query->fields('n', array('nid', 'title'));
+        $query->fields('b', array('body_value'));
+        $query->fields('p', array('model', 'sell_price'));
+        $query->fields('s', array('stock'));
+        $query->condition('n.type', 'product');
+        $query->orderBy('stock');
+        $nodes = $query->execute()->fetchAllAssoc("model");
+
+  // второй сет данных новые или обновленные товары
+    $items = db_select('uc_moysklad_stock_chache', 'moy')
+      ->fields('moy', array('uuid', 'name', 'code', 'stock', 'sale_price', 'description'))
+      ->execute()
+      ->fetchAll();
+
+// ставим в очередь
+// добавляем nid к объекту для очереди если есть
+// в дальнейшем при его наличии будет происходить UPDATE
+//
+/* можно удалять
+ foreach ($items as $item) {
+    $node = $nodes[ $item->code ];
+    $item->nnid = $node->nid;
+
+    $queue->createItem($item);
+  }*/
+
+  $counter = 0;
+
+  foreach ($items as $item) {
+    $node = $nodes[ $item->code ];
+    $item->nnid = $node->nid;
+    $item_stock_normalized = $item->stock >= 0 ? $item->stock : 0;
+
+    // ===================================================================== //
+    if ( $item->code ) {
+      if (
+            ( $item->name != $nodes[$item->code]->title ) ||
+            ( ($item->sale_price)/100 != $nodes[$item->code]->sell_price ) ||
+            ( $item_stock_normalized != $nodes[$item->code]->stock ) ||
+            ( ($item->description != $nodes[$item->code]->body_value) && ($item->description != '') )
+          )
+            {
+              $counter++;
+              $queue->createItem($item);
+              // file_put_contents("logs/debug.log", "nnid\t".$item->nnid."\n", FILE_APPEND);
+              // file_put_contents("logs/debug.log", "name\t".$item->name."\n", FILE_APPEND);
+              // file_put_contents("logs/debug.log", "code\t".$item->code."\n", FILE_APPEND);
+              // file_put_contents("logs/debug.log", "old body\t".$nodes[$item->code]->body_value."\n", FILE_APPEND);
+              // file_put_contents("logs/debug.log", "new body\t".$item->description."\n", FILE_APPEND);
+            }
+    }
+    // ===================================================================== //
+  }
+  file_put_contents("logs/debug.log", $counter."\n", FILE_APPEND);
+
+$DEBUG_parser_end_time = microtime(true);
+$DEBUG_parser_time = $DEBUG_parser_end_time - $DEBUG_parser_start_time;
+file_put_contents("logs/debug-timeline.log", "\nmoysklad_manual_add_jobs_to_queue($counter): ". $DEBUG_parser_time ." sec.", FILE_APPEND);
+
+}
+
+
+/**
+  FUNCTION moysklad_manual_add_jobs_to_queue_all (постановка в очередь)
+*/
+function moysklad_manual_add_jobs_to_queue_all() {
+  $queue = DrupalQueue::get('moy_sklad_queue');
+
+  // первый сет маппинг текущей базы по sku
+    $query = db_select('node', 'n');
+        $query->innerJoin('uc_products', 'p', 'n.nid = p.nid');
+        $query->leftJoin('field_data_body', 'b', 'n.nid = b.entity_id');
+        $query->leftJoin('uc_product_stock', 's', 'n.nid = s.nid');
+        $query->fields('n', array('nid', 'title'));
+        $query->fields('b', array('body_value'));
+        $query->fields('p', array('model', 'sell_price'));
+        $query->fields('s', array('stock'));
+        $query->condition('n.type', 'product');
+        $query->orderBy('stock');
+        $nodes = $query->execute()->fetchAllAssoc("model");
+
+  // второй сет данных новые или обновленные товары
+    $items = db_select('uc_moysklad_stock_chache', 'moy')
+      ->fields('moy', array('uuid', 'name', 'code', 'stock', 'sale_price', 'description'))
+      ->execute()
+      ->fetchAll();
+
+// ставим в очередь
+// добавляем nid к объекту для очереди если есть
+// в дальнейшем при его наличии будет происходить UPDATE
+//
+/* можно удалять
+ foreach ($items as $item) {
+    $node = $nodes[ $item->code ];
+    $item->nnid = $node->nid;
+
+    $queue->createItem($item);
+  }*/
+
+  $counter = 0;
+
+  foreach ($items as $item) {
+    $node = $nodes[ $item->code ];
+    $item->nnid = $node->nid;
+    $item_stock_normalized = $item->stock >= 0 ? $item->stock : 0;
+
+    // ===================================================================== //
+    if ( $item->code ) {
+      $counter++;
+      $queue->createItem($item);
+    }
+    // ===================================================================== //
+  }
+}
+
+
+/* run queue run just in cron
+==============================================================================*/
+function moysklad_cron_queue_info() {
+  $queues['moy_sklad_queue'] = array (
+    'worker callback' => 'moysklad_queue_worker',
+    'time' => 60,    // Time, in seconds, to let this process run [Optional]
+  );
+
+  // drupal_set_message("worker runned");
+
+  return $queues;
+}
+
+
+
+/* queue callback
+==============================================================================*/
+
+
+/* END CRON ==================================================================*/
+
+function moysklad_users_cache () {
+  $DEBUG_parser_start_time = microtime(true);
+
+
+  $users = simplexml_load_string(_moysklad_get_connector('Company'));
+  // try connection
+  if ( $users ) {
+
+    db_truncate('uc_moysklad_users_chache')->execute();
+    $_usersCount = 0;
+
+    foreach ($users->children() as $key => $value) {
+      $_usersCount++;
+
+      $_db_users = db_insert('uc_moysklad_users_chache')
+      ->fields(array(
+        'uuid'  => (string)$value->uuid,
+        'external_code' => (string)$value->externalcode,
+        'uname' => (string)$value->attributes()->name,
+        'mail'  => (string)$value->contact->attributes()->email,
+      ))
+      ->execute();
+
+    }
+    // сохраняем последнее обносление ресурса
+    variable_set('users_cache_update', time());
+    drupal_set_message( $_usersCount . " users cached");
+  }
+  // on connection error
+  else {
+    drupal_set_message(t("communication error or users request is empty!"), 'error');
+  }
+$DEBUG_parser_end_time = microtime(true);
+$DEBUG_parser_time = $DEBUG_parser_end_time - $DEBUG_parser_start_time;
+file_put_contents("logs/debug-timeline.log", "\nmoysklad_users_cache: ". $DEBUG_parser_time ." sec.", FILE_APPEND);
+
+}
+
+/**
+  Кеширование остатков по товарам со сбросом старого кеша
+*/
+function moysklad_form_action_one() {
+
+  // Perform the 1st action
+
+  // get remote data
+
+  $stock = get_moy_stock();
+
+  if ( $stock ) {
+
+    $message = count( $stock ) . " " . t("Total number of items in downloaded stock");
+
+    // dpm(array_slice($stock, 0, 5));
+
+
+    // make it to chache table
+
+$DEBUG_parser_start_time = microtime(true);
+
+    db_truncate('uc_moysklad_stock_chache')->execute();
+
+    // in case all Ok clear old stock in DB
+    // db_truncate('uc_product_stock')->execute();
+    drupal_set_message("Кеш товаров был успешно очищен");
+    drupal_set_message($message, "status");
+
+
+    foreach ($stock as $item) {
+
+      $id = db_insert('uc_moysklad_stock_chache')
+      ->fields(array(
+        'uuid' => $item->goodRef->uuid,
+        'external_code' => $item->externalCode,
+        'code' => $item->goodRef->code,
+        'name' => $item->goodRef->name,
+        'stock' => (int)$item->quantity,
+        'sale_price' => (int)$item->salePrice,
+        'category' => $item->category,
+      ))
+      ->execute();
+
+    }
+
+    // храним последнее обновление ресурса
+    variable_set('stock_cache_update', time());
+
+  }
+  // on communication error
+  else {
+    drupal_set_message(t("communication error or stock request is empty!"), 'error');
+  }
+
+$DEBUG_parser_end_time = microtime(true);
+$DEBUG_parser_time = $DEBUG_parser_end_time - $DEBUG_parser_start_time;
+file_put_contents("logs/debug-timeline.log", "\nmoysklad_form_action_one (cache): ". $DEBUG_parser_time ." sec.", FILE_APPEND);
+
+}
+
+/**
+  Кеширование описаний для товаров
+*/
+function moysclad_get_description_cache () {
+  $descriptions = (_moysklad_get_list2('Good', 'description'));
+
+  if ( $descriptions ) {
+    foreach ($descriptions as $uuid => $description) {
+
+      db_update('uc_moysklad_stock_chache')
+      ->fields(array('description' => $description ))
+      ->condition('uuid', $uuid)
+      ->execute();
+    }
+
+    drupal_set_message('Кеширование описаний для товаров выполнено успешно <strong>Следующий запуск планировщика выполнит обновление описаний</strong>', 'status', FALSE);
+    variable_set('description_update', time());
+  } else {
+    drupal_set_message('Кеширование товаров не выполнено '.__FUNCTION__, 'error', FALSE);
+  }
+
+  file_put_contents("logs/debug-details_run.log", "Run details update on: ".date("c") . "\n", FILE_APPEND);
+}
+
+/**
+    FUNCTION TEST
+ */
+function moysklad_test($form, &$form_state) {
+$DEBUG_parser_start_time = microtime(true);
+
+// $node = node_load(1118757);
+// dpm($node);
+  // variable_set('description_update', time());
+  // variable_set('stock_cache_update', time());
+  // variable_set('users_cache_update', time());
+
+
+// dpm(get_defined_functions());
+
+/**
+ * uc_extra_fields_pane_value_load()
+ * Loads value from database
+ * @param int $p_iElement_id
+ *  id of element, order_id or uc_addresses id
+ * @param int $p_iElementType
+ *  type of element: order or address
+ * @param int $p_iField_id
+ *  id of field as known in uc_extra_fields
+ * @return object
+ */
+// uc_extra_fields_pane_value_load($element_id, $element_type, $field_id)
+$dd = uc_extra_fields_pane_value_load(90, 13, 1);
+dpm(_delivery_type_description($dd->value));
+
+$query = db_select('node', 'n');
+      $query->innerJoin('uc_products', 'p', 'n.nid = p.nid');
+      $query->fields('n', array('nid', 'title'));
+      $query->fields('p', array('model'));
+      $query->condition('n.type', 'product');
+      $nodes=$query->execute()->fetchAllAssoc("model");
+
+$DEBUG_parser_end_time = microtime(true);
+$DEBUG_parser_time = $DEBUG_parser_end_time - $DEBUG_parser_start_time;
+// dpm($DEBUG_parser_time);
+}
+
+
+function moysklad_form_action_two($form, &$form_state) {
+  // Perform the 2nd action
+  drupal_set_message("2nd Action", "status");
+  // dpm(get_defined_functions());
+
+  // dpm(uc_coupon_find('5PCOUPON'));
+
+  // маппинг текущей базы по sku
+  $query = db_select('node', 'n');
+        $query->innerJoin('uc_products', 'p', 'n.nid = p.nid');
+        $query->fields('n', array('nid', 'title'));
+        $query->fields('p', array('model'));
+        $query->condition('n.type', 'product');
+        $nodes=$query->execute()->fetchAllAssoc("model");
+
+  // второй сет данных новые или обновленные товары
+  $items = db_select('uc_moysklad_stock_chache', 'moy')
+    ->fields('moy', array('uuid', 'name', 'code', 'stock', 'sale_price'))
+    ->execute()
+    ->fetchAll();
+
+
+// TEST CASE ==================================================================/
+
+// TODO : Проверить на пустые входяище SKU
+// $items[1111]->code = "";
+
+// TODO : Проверить на отсутствие совпадений
+
+// $items[1111]->code = "DODODODOOD";
+
+
+// TEST CASE ==================================================================/
+
+foreach ($items as $item) {
+  $node = $nodes[ $item->code ];
+  $item->nnid = $node->nid;
+
+  // dpm($item->nnid ." -- ". $item->code);
+}
+
+$node = $nodes[ $items[1111]->code ];
+$items[1111]->nnid = $node->nid;
+
+// dpm($items[1111], "item");
+// dpm($node, "node");
+// dpm(is_null($items[1111]->nnid), "IS NULL ?");
+// нужно передать в интерфейс очереди объект записи из склада
+// нижно добавить к этому объекту nid существующей записи чтобы избежать решения в лоб
+
+
+  // dpm($nodes);
+
+}
+
+/**
+  FUNCTION queue_worker ( обработка очереди )
+*/
+function moysklad_queue_worker($item) {
+  $DEBUG_parser_start_time = microtime(true);
+
+  if (!is_null($item->nnid)) {
+
+    // file_put_contents("logs/debug.log", $item->nnid."\n", FILE_APPEND);
+    // file_put_contents("logs/debug.log", $item->name."\n", FILE_APPEND);
+    // file_put_contents("logs/debug.log", $item->code."\n", FILE_APPEND);
+    file_put_contents("logs/debug.log", $item->description."\n", FILE_APPEND);
+
+
+      // uc_moysklad_stock_chache <- set updated marker
+      db_update('uc_moysklad_stock_chache')
+      ->fields(array('updated' => $item->nnid))
+      ->condition('uuid', $item->uuid)
+      ->execute();
+
+      /**
+       * update SKU and SELL_PRICE
+       */
+
+      db_update('uc_products')
+      ->fields(array('model' => $item->code, 'sell_price' => ($item->sale_price)/100 ))
+      ->condition('nid', $item->nnid)
+      ->execute();
+
+      db_update('node')
+      ->fields(array('title' => $item->name))
+      ->condition('nid', $item->nnid)
+      ->execute();
+
+      db_update('node_revision')
+      ->fields(array('title' => $item->name))
+      ->condition('nid', $item->nnid)
+      ->execute();
+
+      if ( $item->description != '') {
+        $node = node_load($item->nnid);
+        $node->body[$node->language][0]['value'] = $item->description;
+        $node->revision = 1;
+        $node->log = 'Обновление описание из Моегосклада ' . date('c');
+
+        node_save($node);
+      }
+
+      if ( $item->stock > 0 ) {
+        moysklad_set_stock($item->nnid, $item->code, $item->stock);
+      } else {
+        moysklad_set_stock($item->nnid, $item->code, 0);
+      }
+
+
+      drupal_set_message("Обновлен товар\tnid: <strong>". $item->nnid . "</strong>\tmodel: <strong>" . $item->code . "</strong>\ttitle: <strong>" . $item->name . "</strong>", 'status', FALSE);
+
+file_put_contents("logs/debug-timeline.log", "\n\t->update: ", FILE_APPEND);
+
+
+  } else {
+    // if NODE don't exists use ITEMS from server
+    $nid = moysklad_create_new_product( $item->name, $item->code, ($item->sale_price)/100 );
+
+    if ( $item->stock > 0 ) {
+      moysklad_set_stock( $nid, $item->code, $item->stock );
+    } else {
+      moysklad_set_stock( $nid, $item->code, 0 );
+    }
+
+    db_update('uc_moysklad_stock_chache')
+        ->fields(array('updated' => $nid ))
+        ->condition('uuid', $item->uuid)
+        ->execute();
+
+file_put_contents("logs/debug-timeline.log", "\n\t->insert: ", FILE_APPEND);
+  }
+
+
+$DEBUG_parser_end_time = microtime(true);
+$DEBUG_parser_time = $DEBUG_parser_end_time - $DEBUG_parser_start_time;
+file_put_contents("logs/debug-timeline.log", " moysklad_queue_worker: (" .$item->code . ") " . $DEBUG_parser_time ." sec.", FILE_APPEND);
+
+
+}
+
+
+function moysklad_create_new_product ( $title, $sku, $price ) {
+  $complaint_body = 'Your node complaint body text';
+  $node = new stdClass();  // Create a new node object
+  $node->type = 'product';  // Content type
+  $node->language = LANGUAGE_NONE;  // Or e.g. 'en' if locale is enabled
+  node_object_prepare($node);  //Set some default values
+
+  $node->title = $title;
+  $node->body[$node->language][0]['format'] = 'full_html';
+
+  $node->sell_price = $price;
+  $node->model = $sku;
+
+  $node->status = 1;   // (1 or 0): published or unpublished
+  $node->promote = 0;  // (1 or 0): promoted to front page or not
+  $node->sticky = 0;  // (1 or 0): sticky at top of lists or not
+  $node->comment = 0;  // 2 = comments open, 1 = comments closed, 0 = comments hidden
+  // Add author of the node
+  $node->uid = 1;
+  // Set created date
+  $node->date = 'complaint_post_date';
+  $node->created = strtotime('complaint_post_date');
+  // Save the node
+  node_save($node);
+
+  return ($node->nid);
+}
+
+
+function moysklad_set_stock( $nid, $sku, $stock, $active = 1 ){
+  $_stocks = db_select('uc_product_stock', 'st')
+      ->fields('st', array('nid', 'sku', 'stock'))
+      ->condition('sku', $sku)
+      ->execute()
+      ->fetchAll();
+
+      if ($_stocks) {
+        db_update('uc_product_stock')
+        ->fields(array('stock' => $stock))
+        ->condition('sku', $sku)
+        ->execute();
+      } else {
+        $id = db_insert('uc_product_stock')
+        ->fields(array(
+          'sku' => $sku,
+          'nid' => $nid,
+          'stock' => $stock,
+          'active' => $active,
+          ))
+        ->execute();
+      }
+}
+
+
+/* import from old site
+
+function import_users() {
+  include(dirname(__FILE__) . '/users.php');
+
+  foreach ($users as $user ) {
+    db_update('users')
+        ->fields(array('pass' => $user['pass']))
+        ->condition('mail', $user['mail'])
+        ->execute();
+  }
+}
+*/
+
+
+?>

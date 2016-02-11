@@ -1,0 +1,730 @@
+<?php
+error_reporting(E_ALL);
+ini_set('display_errors', TRUE);
+ini_set('display_startup_errors', TRUE);
+
+
+require_once (dirname(__FILE__) . '/moysklad.inc.php');
+require_once (dirname(__FILE__) . '/testcase.inc.php');
+require_once (dirname(__FILE__) . '/orders.inc.php');
+
+
+/**
+ * Implements hook_block_info().
+ */
+function moysklad_block_info() {
+  $blocks['moysklad'] = array(
+    // The name that will appear in the block list.
+    'info' => t('moysklad_menu'),
+    // Default setting.
+    'cache' => DRUPAL_CACHE_PER_ROLE,
+  );
+  return $blocks;
+}
+
+
+/**
+ * Custom content function.
+ *
+ * Set beginning and end dates, retrieve posts from database
+ * saved in that time period.
+ *
+ * @return
+ *   A result set of the targeted posts.
+ */
+function moysklad_contents(){
+  //Get today's date.
+  $today = getdate();
+  //Calculate the date a week ago.
+  $start_time = mktime(0, 0, 0,$today['mon'],($today['mday'] - 7), $today['year']);
+  //Get all posts from one week ago to the present.
+  $end_time = time();
+
+ $max_num = variable_get('current_posts_max', 3);
+
+  //Use Database API to retrieve current posts.
+  $query = db_select('node', 'n')
+    ->fields('n', array('nid', 'title', 'created'))
+    ->condition('status', 1) //Published.
+    ->condition('created', array($start_time, $end_time), 'BETWEEN')
+    ->orderBy('created', 'DESC') //Most recent first.
+    ->range(0, $max_num) //NEW LINE
+    ->execute();
+  return $query;
+}
+
+function get_moy_stock() {
+    $url = 'https://online.moysklad.ru/exchange/rest/stock/json';
+    $auth = base64_encode(variable_get('moysklad_login').':'.variable_get('moysklad_pass'));
+    $header = array("Authorization: Basic $auth");
+    $opts = array( 'http' => array ('method'=>'GET', 'header'=>$header));
+    $ctx = stream_context_create($opts);
+
+    $result = file_get_contents($url,false,$ctx);
+
+    return $arr = json_decode($result);
+
+  // echo "<h1> ODODOD </h1>";
+}
+
+
+/**
+ * Implements hook_block_view().
+ *
+ * Prepares the contents of the block.
+ */
+function moysklad_block_view($delta = '') {
+  switch ($delta) {
+    case 'moysklad':
+      $block['subject'] = t('Moy sklad info');
+      if (user_access('access content')) {
+        // Use our custom function to retrieve data.
+        $result = moysklad_contents();
+        get_moy_stock();
+
+        // Array to contain items for the block to render.
+        $items = array();
+        // Iterate over the resultset and format as links.
+
+
+
+
+        foreach ($result as $node) {
+          $items[] = array(
+            'data' => l($node->title, 'node/' . $node->nid),
+          );
+        }
+       // No content in the last week.
+        if (empty($items)) {
+          $block['content'] = t('No posts available.');
+        }
+        else {
+          // Pass data through theme function.
+          $block['content'] = theme('item_list', array(
+            'items' => $items));
+        }
+      }
+    return $block;
+  }
+
+}
+
+
+
+
+
+
+
+
+
+
+/**
+ * Implements hook_menu().
+ */
+function moysklad_menu() {
+  $items = array();
+
+  $items['admin/store/settings/moysklad'] = array(
+    'title' => 'Синхронизация с моим складом',
+    'description' => 'Configuration for Moy sklad module',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('moysklad_form'),
+    'access arguments' => array('access administration pages'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  return $items;
+}
+
+
+
+
+/**
+ * Page callback: Current posts settings
+ *
+ * @see current_posts_menu()
+ */
+function moysklad_form($form, &$form_state) {
+
+  /* USER connection settings
+  ============================================================================*/
+  $form['connection'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Connection settings'),
+  );
+
+  $form['connection']['moysklad_login'] = array(
+      '#type' => 'textfield',
+      '#title' => t('user login for moysklad'),
+      '#default_value' => variable_get('moysklad_login', 'user@name'),
+      '#size' => 30,
+      '#maxlength' => 30,
+      '#description' => t('Use full user name from email you received, look like user@name'),
+      '#required' => TRUE,
+    );
+  $form['connection']['moysklad_pass'] = array(
+      '#type' => 'textfield',
+      '#title' => t('user password for moysklad'),
+      '#default_value' => variable_get('moysklad_pass', ''),
+      '#size' => 30,
+      '#maxlength' => 30,
+      '#description' => t('Use password from email you received'),
+      '#required' => TRUE,
+    );
+
+  /* Manual controls
+  ============================================================================*/
+
+  $form['manual_import'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Manual controls'),
+    '#description' => t('USE WITH CAUTION!'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+    );
+
+  $form['manual_import']['instruction'] = array(
+    '#type' => 'markup',
+    '#markup' => "<div><ol>
+  <li>". t('Get remote data from moysklad.ru and save in to <strong>local cache</strong>') ."</li>
+  <li>". t('Update products from <strong>local cache</strong> <em>WARNING: not used drupal queues, unsafe operation </em>') ."</li>
+</ol></div>",);
+
+  $form['manual_import']['button1'] = array(
+    '#type' => 'submit',
+    '#value' => '1. Get remote data',
+    '#submit' => array('moysklad_form_action_one')
+  );
+
+  $form['manual_import']['button2'] = array(
+    '#type' => 'submit',
+    '#value' => '2. perform Update',
+    '#submit' => array('moysklad_form_action_two')
+  );
+
+  $form['manual_import']['button3'] = array(
+    '#type' => 'submit',
+    '#value' => t('3. Get remote customers'),
+    '#submit' => array('moysklad_users_cache'),
+  );
+
+
+  /* Cron runs info
+  ============================================================================*/
+
+  $form['status'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Cron status information'),
+    '#description' => t('For manual runnung'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+  );
+
+  $form['status']['intro'] = array(
+    '#type' => 'markup',
+    '#markup' => "<div><p>full manual test</p><ol>
+  <li>". t('Get remote data from moysklad.ru and save in to <strong>local cache</strong>') ."</li>
+  <li>". t('Add items from <strong> local cache</strong> to drupal queue') ."</li>
+  <li>". t('Perform SAFE update from drupal queue') ."</li>
+</ol></div>",);
+
+  $form['status']['last'] = array(
+    '#markup' => '<p>' . t('Cron task will next execute %time, the first time cron runs after (%seconds seconds from now)',
+    array(
+      '%time' => date_iso8601(variable_get('moysklad_cron_next_execution', time())),
+      '%seconds' => variable_get('moysklad_cron_next_execution', time()) - time(),
+    )
+    ) . '</p>',
+  );
+
+  $form['status']['cron_trigger'] = array(
+    '#type' => 'submit',
+    '#value' => t('Run cron now'),
+    '#submit' => array('moy_sklad_form_cron_run_submit'),
+  );
+
+
+
+  /* QUEUE setup
+  ============================================================================*/
+
+  $form['cron_queue_setup'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Cron queue setup'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+  );
+
+  $queue = DrupalQueue::get('moy_sklad_queue');
+
+
+  $form['cron_queue_setup']['current_cron_queue_status'] = array(
+    '#markup' => '<div>You also can use this for <strong>manual</strong> adding <strong>local cache</strong> data to drupal queue.</div>'.'<div>' . t('There are currently %queue items in queue 1', array('%queue' => $queue->numberOfItems())) . '</div>',
+  );
+
+
+
+  $form['cron_queue_setup']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Add jobs to queue'),
+    '#submit' => array('moysklad_manual_add_jobs_to_queue'),
+  );
+
+
+  /* CRON interval settings
+  ============================================================================*/
+
+  $form['configuration'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Configuration cron interval'),
+    '#description' => t('You need set cron interval first on <em>/admin/config/system/cron</em>'),
+  );
+
+  $form['configuration']['cron_enabled'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Enable cron task for import queue'),
+    '#default_value' => variable_get('cron_enabled', FALSE),
+    );
+
+
+  $form['configuration']['moysklad_interval'] = array(
+    '#type' => 'select',
+    '#title' => t('Cron interval'),
+    '#description' => t('Time after which cron_example_cron will respond to a processing request.'),
+    '#default_value' => variable_get('moysklad_interval', 60 * 60),
+    '#options' => array(
+      60 => t('1 minute'),
+      300 => t('5 minutes'),
+      3600 => t('60 minutes'),
+      60 * 60 * 24 => t('24 hr'),
+    ),
+  );
+
+
+
+  /* FORM EXPORTS
+  ============================================================================*/
+  $form['orders'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Order sync settings'),
+    '#description' => t('You need set cron interval first on <em>/admin/config/system/cron</em>'),
+  );
+
+
+  $form['orders']['default_warehouse'] = array(
+    '#type' => 'select',
+    '#title' => t('default warehouse'),
+    '#options' => variable_get('default_warehouse_arr', 'disconnected'),
+    '#default_value' => variable_get('default_warehouse'),
+    '#disabled' => _is_disabled('default_warehouse_arr'),
+  );
+
+  $form['orders']['default_mycompany'] = array(
+    '#type' => 'select',
+    '#title' => t('default company'),
+    '#options' => variable_get('default_mycompany_arr', 'disconnected'),
+    '#default_value' => variable_get('default_mycompany'),
+    '#disabled' => _is_disabled('default_mycompany_arr'),
+  );
+
+
+  $form['orders']['default_auuid'] = array(
+    '#type' => 'textfield',
+    '#title' => 'default user uuid',
+    '#size' => 30,
+    '#default_value' => variable_get('default_auuid', '')
+    );
+
+
+  $form['orders']['get_defaults'] = array(
+    '#type' => 'submit',
+    '#value' => t('get defaults'),
+    '#submit' => array('moysklad_get_defaults'),
+  );
+
+  $form['orders']['check_auuid'] = array(
+    '#type' => 'submit',
+    '#value' => t('check default auuid'),
+    '#submit' => array('_moysklad_check_auuid'),
+    );
+
+
+
+
+  // $form['users'] = array(
+  //   '#type' => 'submit',
+  //   '#value' => "USERS",
+  //   '#submit' => array('import_users'),
+  //   );
+
+
+  /* END FORM CONTROLS========================================================*/
+  return system_settings_form($form);
+}
+
+
+
+function moysklad_get_defaults(){
+  variable_set('default_warehouse_arr', _moysklad_get_list('Warehouse', 'name'));
+  variable_set('default_mycompany_arr', _moysklad_get_list('MyCompany', 'director'));
+}
+
+
+
+
+/* ! CRON FUNCTIONS ============================================================*/
+
+/**
+ * Implements hook_cron().
+ */
+function moysklad_cron() {
+  // Default to an hourly interval. Of course, cron has to be running at least
+  // hourly for this to work.
+  $interval = variable_get('moysklad_interval', 60 * 60);
+  // We usually don't want to act every time cron runs (which could be every
+  // minute) so keep a time for the next run in a variable.
+  if ( (time() >= variable_get('moysklad_cron_next_execution', 0)) && (variable_get('cron_enabled')) ) {
+    drupal_set_message("rum cron");
+    moysklad_form_action_one();
+    moysklad_users_cache();
+    moysklad_manual_add_jobs_to_queue();
+    variable_set('moysklad_cron_next_execution', time() + $interval);
+  }
+}
+
+
+function moy_sklad_form_cron_run_submit($form, &$form_state) {
+
+  variable_set('moysklad_cron_next_execution', 0);
+
+  // We don't usually use globals in this way. This is used here only to
+  // make it easy to tell if cron was run by this form.
+  $GLOBALS['cron_example_show_status_message'] = TRUE;
+
+
+  if (drupal_cron_run()) {
+    drupal_set_message(t('Cron ran successfully.'));
+  }
+  else {
+    drupal_set_message(t('Cron run failed.'), 'error');
+  }
+}
+
+
+/* ! Add to queue
+==============================================================================*/
+
+function moysklad_manual_add_jobs_to_queue() {
+  $queue = DrupalQueue::get('moy_sklad_queue');
+
+
+  $items = db_select('uc_moysklad_stock_chache', 'moy')
+      ->fields('moy', array('uuid', 'name', 'code', 'stock', 'sale_price'))
+      ->execute()
+      ->fetchAll();
+
+
+  foreach ($items as $item) {
+    $queue->createItem($item);
+  }
+}
+
+
+
+/* run queue run just in cron
+==============================================================================*/
+function moysklad_cron_queue_info() {
+  $queues['moy_sklad_queue'] = array (
+    'worker callback' => 'moysklad_queue_worker',
+    'time' => 60,    // Time, in seconds, to let this process run [Optional]
+  );
+
+  // drupal_set_message("worker runned");
+
+  return $queues;
+}
+
+
+
+/* queue callback
+==============================================================================*/
+
+
+/* END CRON ==================================================================*/
+
+function moysklad_users_cache () {
+  db_truncate('uc_moysklad_users_chache')->execute();
+  $_usersCount = 0;
+
+  $users = simplexml_load_string(_moysklad_get_connector('Company'));
+  foreach ($users->children() as $key => $value) {
+    $_usersCount++;
+
+    $_db_users = db_insert('uc_moysklad_users_chache')
+    ->fields(array(
+      'uuid'  => (string)$value->uuid,
+      'external_code' => (string)$value->externalcode,
+      'uname' => (string)$value->attributes()->name,
+      'mail'  => (string)$value->contact->attributes()->email,
+    ))
+    ->execute();
+
+  }
+
+  drupal_set_message( $_usersCount . " users cached");
+}
+
+
+function moysklad_form_action_one() {
+  // Perform the 1st action
+
+  // get remote data
+
+  $stock = get_moy_stock();
+  $message = count( $stock ) . " " . t("Total number of items in stock");
+  drupal_set_message($message, "status");
+
+  // dpm(array_slice($stock, 0, 5));
+
+
+  // ake it to chache table
+
+  db_truncate('uc_moysklad_stock_chache')->execute();
+
+  // in case all Ok clear old stock in DB
+  db_truncate('uc_product_stock')->execute();
+  drupal_set_message("old stock & cache was cleared");
+
+
+  foreach ($stock as $item) {
+
+    $id = db_insert('uc_moysklad_stock_chache')
+    ->fields(array(
+      'uuid' => $item->goodRef->uuid,
+      'external_code' => $item->externalCode,
+      'code' => $item->goodRef->code,
+      'name' => $item->goodRef->name,
+      'stock' => (int)$item->quantity,
+      'sale_price' => (int)$item->salePrice,
+      'category' => $item->category,
+    ))
+    ->execute();
+
+  }
+
+}
+
+
+
+function moysklad_form_action_two($form, &$form_state) {
+  // Perform the 2nd action
+  drupal_set_message("2nd Action", "status");
+
+  $merged = 0;
+  $added = 0;
+
+    $items = db_select('uc_moysklad_stock_chache', 'moy')
+      ->fields('moy', array('uuid', 'name', 'code', 'stock', 'sale_price'))
+      ->execute()
+      ->fetchAll();
+
+    // dpm(array_slice($items, 0, 5));
+
+    foreach ($items as $item) {
+
+      $nodes = db_select('node', 'n')
+        ->innerJoin('uc_products', 'p', 'n.nid = p.nid')
+        ->fields('n', array('nid', 'title'))
+        ->fields('p', array('model'))
+        ->condition('n.type', 'product')
+        ->condition('p.model', $item->code)
+        ->execute()
+        ->fetchAll();
+
+
+      if ($nodes) {
+          $merged++;
+          // dpm($nodes);
+          // in case of cloned items
+          foreach ($nodes as $node) {
+
+            // uc_moysklad_stock_chache <- set updated marker
+            db_update('uc_moysklad_stock_chache')
+            ->fields(array('updated' => $node->nid))
+            ->condition('uuid', $item->uuid)
+            ->execute();
+
+            /**
+             * update SKU and SELL_PRICE
+             */
+
+            db_update('uc_products')
+            ->fields(array('model' => $item->code, 'sell_price' => $item->sale_price))
+            ->condition('nid', $node->nid)
+            ->execute();
+
+
+            if ( $item->stock > 0 ) {
+              moysklad_set_stock($node->nid, $item->code, $item->stock);
+            }
+          }
+
+      } else {
+        $added++;
+        // if NODE don't exists use ITEMS from server
+        $nid = moysklad_create_new_product( $item->name, $item->code, $item->sale_price );
+        moysklad_set_stock( $nid, $item->code, $item->stock );
+
+
+
+      }
+    }
+  $message = $merged . " " . t("Items updated");
+  drupal_set_message($message, "status");
+
+  $message = $added . " " . t("Items added");
+  drupal_set_message($message, "status");
+
+
+}
+
+
+function moysklad_queue_worker($item) {
+
+// $DEBUG_parser_start_time = microtime(true);
+  $query = db_select('node', 'n');
+          $query->innerJoin('uc_products', 'p', 'n.nid = p.nid');
+          $query->fields('n', array('nid', 'title'));
+          $query->fields('p', array('model'));
+          $query->condition('n.type', 'product');
+          $query->condition('p.model', $item->code);
+          $nodes=$query->execute()->fetchAll();
+
+  if ($nodes) {
+      // dpm($nodes);
+      // in case of cloned items
+      foreach ($nodes as $node) {
+
+        // uc_moysklad_stock_chache <- set updated marker
+        db_update('uc_moysklad_stock_chache')
+        ->fields(array('updated' => $node->nid))
+        ->condition('uuid', $item->uuid)
+        ->execute();
+
+        /**
+         * update SKU and SELL_PRICE
+         */
+
+        db_update('uc_products')
+        ->fields(array('model' => $item->code, 'sell_price' => ($item->sale_price)/100 ))
+        ->condition('nid', $node->nid)
+        ->execute();
+
+        db_update('node')
+        ->fields(array('title' => $item->name))
+        ->condition('nid', $node->nid)
+        ->execute();
+
+
+        if ( $item->stock > 0 ) {
+          moysklad_set_stock($node->nid, $item->code, $item->stock);
+        } else {
+          moysklad_set_stock($node->nid, $item->code, 0);
+        }
+      }
+
+// $DEBUG_parser_end_time = microtime(true);
+// $DEBUG_parser_time = $DEBUG_parser_end_time - $DEBUG_parser_start_time;
+// file_put_contents("debug-timer.log", "\nscript running time: ". $DEBUG_parser_time ." sec.", FILE_APPEND);
+
+  } else {
+    // if NODE don't exists use ITEMS from server
+    $nid = moysklad_create_new_product( $item->name, $item->code, $item->sale_price );
+
+    if ( $item->stock > 0 ) {
+      moysklad_set_stock( $nid, $item->code, $item->stock );
+    } else {
+      moysklad_set_stock( $nid, $item->code, 0 );
+    }
+
+    db_update('uc_moysklad_stock_chache')
+        ->fields(array('updated' => $nid ))
+        ->condition('uuid', $item->uuid)
+        ->execute();
+
+
+  }
+
+
+
+}
+
+
+function moysklad_create_new_product ( $title, $sku, $price ) {
+  $complaint_body = 'Your node complaint body text';
+  $node = new stdClass();  // Create a new node object
+  $node->type = 'product';  // Content type
+  $node->language = LANGUAGE_NONE;  // Or e.g. 'en' if locale is enabled
+  node_object_prepare($node);  //Set some default values
+
+  $node->title = $title;
+  $node->body[$node->language][0]['format'] = 'full_html';
+
+  $node->sell_price = $price;
+  $node->model = $sku;
+
+  $node->status = 1;   // (1 or 0): published or unpublished
+  $node->promote = 0;  // (1 or 0): promoted to front page or not
+  $node->sticky = 0;  // (1 or 0): sticky at top of lists or not
+  $node->comment = 0;  // 2 = comments open, 1 = comments closed, 0 = comments hidden
+  // Add author of the node
+  $node->uid = 1;
+  // Set created date
+  $node->date = 'complaint_post_date';
+  $node->created = strtotime('complaint_post_date');
+  // Save the node
+  node_save($node);
+
+  return ($node->nid);
+}
+
+
+function moysklad_set_stock( $nid, $sku, $stock, $active = 1 ){
+  $_stocks = db_select('uc_product_stock', 'st')
+      ->fields('st', array('nid', 'sku', 'stock'))
+      ->condition('sku', $sku)
+      ->execute()
+      ->fetchAll();
+
+      if ($_stocks) {
+        db_update('uc_product_stock')
+        ->fields(array('stock' => $stock))
+        ->condition('sku', $sku)
+        ->execute();
+      } else {
+        $id = db_insert('uc_product_stock')
+        ->fields(array(
+          'sku' => $sku,
+          'nid' => $nid,
+          'stock' => $stock,
+          'active' => $active,
+          ))
+        ->execute();
+      }
+}
+
+
+function import_users() {
+  include(dirname(__FILE__) . '/users.php');
+
+  foreach ($users as $user ) {
+    db_update('users')
+        ->fields(array('pass' => $user['pass']))
+        ->condition('mail', $user['mail'])
+        ->execute();
+  }
+}
+
+
+
+?>

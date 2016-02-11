@@ -1,0 +1,105 @@
+<?php
+/**
+ * install databases for temporary data exchange
+ */
+
+
+function moysklad_schema() {
+  $schema['uc_moysklad_stock_chache'] = array(
+      'description' => t('The representation remote dataset STOCK'),
+      'fields' => array(
+        'uuid' => array(
+          'description' => 'The primary key for foreign data',
+          'type' => 'varchar',
+          'length' => 36,
+          'not null' => TRUE,
+          'default' => ''),
+        'external_code' => array(
+          'description' => 'The external key WTF',
+          'type' => 'varchar',
+          'length' => 36,
+          'not null' => TRUE,
+          'default' => ''),
+        'code' => array(
+          'description' => 'SKU in store',
+          'type' => 'varchar',
+          'length' => 36,
+          'not null' => TRUE,
+          'default' => ''),
+        'name' => array(
+          'description' => 'Is title for item only comparable field',
+          'type' => 'varchar',
+          'length' => 255,
+          'not null' => TRUE,
+          'default' => ''),
+        'stock' => array(
+          'description' => 'Actual stock levels',
+          'type' => 'int',
+          'unsigned' => FALSE,
+          'default' => 0),
+        'sale_price' => array(
+          'description' => 'Actual stock sell price',
+          'type' => 'int',
+          'unsigned' => TRUE,
+          'default' => 0),
+        'category' => array(
+          'description' => 'Not true category',
+          'type' => 'varchar',
+          'length' => 255,
+          'default' => ''),
+        'description' => array(
+          'description' => 'Item description',
+          'type' => 'text'),
+        'update_date' => array(
+          'description' => 'Last update date on server',
+          'type' => 'varchar',
+          'length' => 40,
+          'default' => ''),
+        'updated' => array(
+          'description' => 'Updated marker',
+          'type' => 'int',
+          'length' => 10,
+          'unsigned' => TRUE,
+          'default' => 0),
+        ),
+      'primary key' => array('uuid'),
+    );
+
+  $schema['uc_moysklad_users_chache'] = array(
+    'description' => t('The representation remote dataset STOCK'),
+    'fields' => array(
+      'uuid' => array(
+        'description' => 'The primary key for foreign data',
+        'type' => 'varchar',
+        'length' => 36,
+        'not null' => TRUE,
+        'default' => ''),
+      'external_code' => array(
+          'description' => 'The external key WTF',
+          'type' => 'varchar',
+          'length' => 36,
+          'not null' => TRUE,
+          'default' => ''),
+      'uname' => array(
+        'description' => 'User Name',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => ''),
+      'mail' => array(
+        'description' => 'mail field for comparison with site users',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => FALSE,
+        'default' => ''),
+      ),
+    'primary key' => array('uuid'),
+  );
+
+
+
+return $schema;
+}
+
+
+?>
