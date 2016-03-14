@@ -260,7 +260,7 @@ function moysklad_uc_checkout_complete($order, $account) {
 
   // немного хардкода
   if(function_exists('uc_extra_fields_pane_value_load') && function_exists('_delivery_type_description')){
-    $dd = uc_extra_fields_pane_value_load($order->order_id, 13, 1);
+    $dd = uc_extra_fields_pane_value_load($order->order_id, 12, 1);
     $description .= "Предпочтительный способ доставки: " . _delivery_type_description($dd->value) . "\n";
   }
   $description .= "Адрес доставки: " . $order->delivery_city . " " . $order->delivery_street1 . " " . $order->delivery_street2 . "\n";

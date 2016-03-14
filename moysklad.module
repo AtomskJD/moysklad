@@ -10,6 +10,19 @@ require_once (dirname(__FILE__) . '/orders.inc.php');
 
 
 /**
+*  Create access permissions
+*/
+
+function moysklad_permission() {
+  return array(
+    'administer moysklad' => array(
+      'title' => t('Administer MOYSKLAD module'),
+      'description' => 'Права для управления модулем моего склада',
+    ),
+  );
+}
+
+/**
  * Implements hook_block_info().
  */
 function moysklad_block_info() {
@@ -145,7 +158,7 @@ function moysklad_menu() {
     'description' => 'Configuration for Moy sklad module',
     'page callback' => 'drupal_get_form',
     'page arguments' => array('moysklad_form'),
-    'access arguments' => array('access administration pages'),
+    'access arguments' => array('administer moysklad'),
     'type' => MENU_NORMAL_ITEM,
   );
 
@@ -768,7 +781,8 @@ $DEBUG_parser_start_time = microtime(true);
  */
 // uc_extra_fields_pane_value_load($element_id, $element_type, $field_id)
 $dd = uc_extra_fields_pane_value_load(90, 13, 1);
-dpm(_delivery_type_description($dd->value));
+// dpm(_delivery_type_description($dd->value));
+dpm(uc_extra_fields_pane_value_load(1461, 12, 1)->value);
 
 $query = db_select('node', 'n');
       $query->innerJoin('uc_products', 'p', 'n.nid = p.nid');
@@ -777,8 +791,8 @@ $query = db_select('node', 'n');
       $query->condition('n.type', 'product');
       $nodes=$query->execute()->fetchAllAssoc("model");
 
-$DEBUG_parser_end_time = microtime(true);
-$DEBUG_parser_time = $DEBUG_parser_end_time - $DEBUG_parser_start_time;
+// $DEBUG_parser_end_time = microtime(true);
+// $DEBUG_parser_time = $DEBUG_parser_end_time - $DEBUG_parser_start_time;
 // dpm($DEBUG_parser_time);
 }
 

@@ -13,7 +13,7 @@ function _is_disabled($varName) {
 */
 function _delivery_type_description ( $delivery_id ) {
   switch ( $delivery_id ) {
-    case 'delivery_3':
+    case 'delivery_1':
       $result = 'самовывоз';
       break;
     case 'delivery_2':
@@ -23,7 +23,7 @@ function _delivery_type_description ( $delivery_id ) {
       $result = 'доставка до ТК';
       break;
     default:
-      $result = 'доставка до ТК';
+      $result = 'Доставка до ТК';
       break;
   }
 
