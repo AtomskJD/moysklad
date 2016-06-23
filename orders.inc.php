@@ -126,7 +126,7 @@ function _moysklad_user_order_to_xml( $auuid, $items, $coupons, $description ) {
       $orderPosition = $orderXML->addChild('customerOrderPosition');
 
         $orderPosition->addAttribute('vat', 0);
-        $orderPosition->addAttribute('goodUuid', _moysklad_title_to_guuid( $item->title ));
+        $orderPosition->addAttribute('goodUuid', _moysklad_model_to_guuid( $item->model ));
         $orderPosition->addAttribute('quantity', $item->qty );
         $orderPosition->addAttribute('discount', $discount);
 
@@ -232,6 +232,12 @@ function _moysklad_email_to_auuid( $mail ) {
   return ($auuid['uuid']);
 }
 
+
+/**
+ * Поиск уникального идентификатора товара по названию
+ * @param  string $title   название товара
+ * @return STRING          буквенно-числовой идентификатор моегосклада
+ */
 function _moysklad_title_to_guuid( $title ) {
   $goods = db_select('uc_moysklad_stock_chache', 'sc')
     ->fields('sc', array('uuid', 'name'))
@@ -242,6 +248,26 @@ function _moysklad_title_to_guuid( $title ) {
     return $goods['uuid'];
 
 }
+
+
+
+/**
+ * Поиск идентификатора по SKU(model) товара в заказе
+ * @param  STRING   $model   sku товара
+ * @return STRING            Идентификатор товара
+ */
+function _moysklad_model_to_guuid( $model ) {
+  $goods = db_select('uc_moysklad_stock_chache', 'sc')
+    ->fields('sc', array('uuid', 'code'))
+    ->condition('sc.code', $model)
+    ->execute()
+    ->fetchAssoc();
+
+  $guuid = $goods['uuid'];
+
+  return $guuid;
+}
+
 
 
 function _moysklad_check_auuid() {

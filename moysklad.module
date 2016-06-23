@@ -456,7 +456,7 @@ function moysklad_cron() {
 
     variable_set('moysklad_cron_next_execution', time() + $interval);
 
-    file_put_contents("logs/timer.log", "\nscript running timestamp(date Hour:min:sec): \t". date("d H:i:s"), FILE_APPEND);
+    file_put_contents("logs/timer.log", "\nscript running timestamp(date Hour:min:sec): \t". date("d/M H:i:s"), FILE_APPEND);
 
   }
 }
@@ -630,15 +630,31 @@ function moysklad_cron_queue_info() {
 
 /* END CRON ==================================================================*/
 
-function moysklad_users_cache () {
+function moysklad_users_cache ( ) {
   $DEBUG_parser_start_time = microtime(true);
+  $args = func_get_args();
+    if ( isset($args[0]) && !is_array($args[0]) ) {
+      $offset = func_get_arg(0);
+    } else {
+      $offset = 0;
+    }
 
 
-  $users = simplexml_load_string(_moysklad_get_connector('Company'));
+  $users = simplexml_load_string(_moysklad_get_connector('Company', 'list', $offset));
+
+  $total = (int)$users[0]['total'];
+  $start = (int)$users[0]['start'];
+  $start = (int)$offset;
+  $limit = (int)$users[0]['count'];
+
+
   // try connection
   if ( $users ) {
 
-    db_truncate('uc_moysklad_users_chache')->execute();
+    if ($offset == 0) {
+      db_truncate('uc_moysklad_users_chache')->execute();
+    }
+
     $_usersCount = 0;
 
     foreach ($users->children() as $key => $value) {
@@ -662,10 +678,16 @@ function moysklad_users_cache () {
   else {
     drupal_set_message(t("communication error or users request is empty!"), 'error');
   }
+
+
 $DEBUG_parser_end_time = microtime(true);
 $DEBUG_parser_time = $DEBUG_parser_end_time - $DEBUG_parser_start_time;
 file_put_contents("logs/debug-timeline.log", "\nmoysklad_users_cache: ". $DEBUG_parser_time ." sec.", FILE_APPEND);
+    file_put_contents("logs/debug-timeline.log", "\n\t ->  ". $offset ." from " . $total . " users", FILE_APPEND);
 
+  if ($total > ($start + $limit)) {
+    moysklad_users_cache( (int)($start + $limit) );
+  }
 }
 
 /**
@@ -759,38 +781,14 @@ function moysclad_get_description_cache () {
 function moysklad_test($form, &$form_state) {
 $DEBUG_parser_start_time = microtime(true);
 
-// $node = node_load(1118757);
-// dpm($node);
-  // variable_set('description_update', time());
-  // variable_set('stock_cache_update', time());
-  // variable_set('users_cache_update', time());
+  drupal_set_message("this is drupal test for ORDER search function", "status");
 
+  $order = uc_order_load(9086);
 
-// dpm(get_defined_functions());
-
-/**
- * uc_extra_fields_pane_value_load()
- * Loads value from database
- * @param int $p_iElement_id
- *  id of element, order_id or uc_addresses id
- * @param int $p_iElementType
- *  type of element: order or address
- * @param int $p_iField_id
- *  id of field as known in uc_extra_fields
- * @return object
- */
-// uc_extra_fields_pane_value_load($element_id, $element_type, $field_id)
-$dd = uc_extra_fields_pane_value_load(90, 13, 1);
-// dpm(_delivery_type_description($dd->value));
-dpm(uc_extra_fields_pane_value_load(1461, 12, 1)->value);
-
-$query = db_select('node', 'n');
-      $query->innerJoin('uc_products', 'p', 'n.nid = p.nid');
-      $query->fields('n', array('nid', 'title'));
-      $query->fields('p', array('model'));
-      $query->condition('n.type', 'product');
-      $nodes=$query->execute()->fetchAllAssoc("model");
-
+  foreach ($order->products as $item) {
+    $guuid = _moysklad_model_to_guuid($item->model);
+    dpm($item->model ." ". $guuid);
+  }
 // $DEBUG_parser_end_time = microtime(true);
 // $DEBUG_parser_time = $DEBUG_parser_end_time - $DEBUG_parser_start_time;
 // dpm($DEBUG_parser_time);
@@ -977,7 +975,7 @@ function moysklad_set_stock( $nid, $sku, $stock, $active = 1 ){
 
       if ($_stocks) {
         db_update('uc_product_stock')
-        ->fields(array('stock' => $stock))
+        ->fields(array('stock' => $stock, 'active' => $active))
         ->condition('sku', $sku)
         ->execute();
       } else {
